@@ -1,0 +1,904 @@
+/* Typography */
+
+h1,
+h2,
+h3,
+h4 {
+    color: var(--fb-text);
+    line-height: 1.25;
+    letter-spacing: -0.025em;
+}
+
+h1 {
+    margin: 0;
+    color: var(--fb-green);
+    font-size: clamp(1.9rem, 4vw, 2.65rem);
+    font-weight: 800;
+}
+
+h2 {
+    margin: 0 0 18px;
+    font-size: clamp(1.3rem, 2.5vw, 1.65rem);
+    font-weight: 750;
+}
+
+h3 {
+    margin: 0 0 14px;
+    font-size: 1.16rem;
+    font-weight: 700;
+}
+
+h4 {
+    margin: 20px 0 12px;
+    font-size: 1rem;
+}
+
+p {
+    margin: 0 0 12px;
+}
+
+.subtitle {
+    margin: 12px 0 30px;
+    color: var(--fb-muted);
+    line-height: 1.7;
+}
+
+
+/* Login and registration */
+
+.page {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    background: radial-gradient( ellipse at 12% 15%, rgba(155, 197, 153, 0.21), transparent 45%), radial-gradient( ellipse at 90% 85%, rgba(227, 206, 154, 0.17), transparent 40%), var(--fb-bg);
+}
+
+.card {
+    position: relative;
+    width: 100%;
+    max-width: 480px;
+    padding: 40px;
+    border: 1px solid rgba(220, 230, 221, 0.9);
+    border-radius: 26px;
+    background: var(--fb-surface);
+    box-shadow: var(--fb-shadow);
+}
+
+.card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 32px;
+    left: 32px;
+    height: 4px;
+    border-radius: 0 0 8px 8px;
+    background: linear-gradient(90deg, #176443, #8ba967);
+}
+
+.card>h1 {
+    letter-spacing: -0.045em;
+}
+
+.card form {
+    margin-top: 20px;
+}
+
+
+/* Forms */
+
+form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+label {
+    display: block;
+    color: var(--fb-text);
+    font-size: 0.9rem;
+    font-weight: 650;
+}
+
+form>label:not(:first-child) {
+    margin-top: 8px;
+}
+
+input,
+select,
+textarea {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    padding: 12px 14px;
+    border: 1px solid #c8d6cb;
+    border-radius: 11px;
+    background: #fff;
+    color: var(--fb-text);
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+input,
+select {
+    min-height: 48px;
+}
+
+textarea {
+    min-height: 100px;
+    line-height: 1.6;
+    resize: vertical;
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: #697b70;
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+    border-color: #8fae98;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+    border-color: var(--fb-green);
+    outline: 2px solid var(--fb-green);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 5px rgba(23, 100, 67, 0.08);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+    background: #edf1ec;
+    color: var(--fb-muted);
+    cursor: not-allowed;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+    display: inline-block;
+    width: auto;
+    min-height: auto;
+    accent-color: var(--fb-green);
+}
+
+fieldset {
+    min-width: 0;
+}
+
+.donation-form {
+    margin-top: 20px;
+}
+
+.donation-form fieldset {
+    display: grid;
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.donation-form legend {
+    margin-bottom: 16px;
+    font-weight: 700;
+}
+
+
+/* Buttons */
+
+button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    margin-top: 10px;
+    padding: 11px 18px;
+    border: 1px solid transparent;
+    border-radius: 11px;
+    background: var(--fb-green);
+    color: #fff;
+    font-size: 0.92rem;
+    font-weight: 650;
+    line-height: 1.4;
+    text-align: center;
+    cursor: pointer;
+    transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+button:hover:not(:disabled) {
+    background: var(--fb-green-dark);
+    box-shadow: 0 4px 10px rgba(23, 100, 67, 0.12);
+}
+
+button:active:not(:disabled) {
+    box-shadow: none;
+}
+
+button:disabled {
+    background: #e5ebe5;
+    border-color: #d3ddd4;
+    color: #627267;
+    box-shadow: none;
+    cursor: not-allowed;
+}
+
+.card form>button[type="submit"] {
+    min-height: 48px;
+    margin-top: 14px;
+}
+
+.card form>button[type="button"],
+.listings-heading>button,
+.header-actions>button,
+.dashboard-header>button {
+    border-color: var(--fb-border);
+    background: #fff;
+    color: var(--fb-green);
+}
+
+.card form>button[type="button"]:hover:not(:disabled),
+.listings-heading>button:hover:not(:disabled),
+.header-actions>button:hover:not(:disabled),
+.dashboard-header>button:hover:not(:disabled) {
+    border-color: #9ebca6;
+    background: var(--fb-green-soft);
+}
+
+
+/* Feedback */
+
+.message,
+.verification-message {
+    margin-top: 20px;
+    padding: 13px 16px;
+    border: 1px solid var(--fb-border);
+    border-radius: 12px;
+    background: var(--fb-surface-soft);
+    color: var(--fb-text);
+    overflow-wrap: anywhere;
+}
+
+[role="alert"] {
+    padding: 13px 16px;
+    border: 1px solid #edc8cb;
+    border-radius: 12px;
+    background: #fff3f4;
+    color: var(--fb-danger);
+    overflow-wrap: anywhere;
+}
+
+.verification-notice {
+    margin-bottom: 20px;
+    padding: 16px 18px;
+    border: 1px solid #ead8a6;
+    border-radius: 14px;
+    background: var(--fb-warning-bg);
+    color: var(--fb-warning-text);
+    line-height: 1.7;
+}
+
+.profile {
+    margin: 20px 0;
+    padding: 18px;
+    border: 1px solid var(--fb-border);
+    border-radius: 14px;
+    background: var(--fb-surface-soft);
+    overflow-wrap: anywhere;
+}
+
+.profile p:last-child {
+    margin-bottom: 0;
+}
+
+
+/* Dashboard structure */
+
+.dashboard-page {
+    min-height: 100vh;
+    padding: 32px 24px 56px;
+    background: var(--fb-bg);
+}
+
+.dashboard-container {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 24px;
+    margin-bottom: 28px;
+    padding: 24px 28px;
+    border: 1px solid var(--fb-border);
+    border-radius: var(--fb-radius);
+    background: var(--fb-surface);
+    box-shadow: 0 4px 18px rgba(27, 58, 39, 0.025);
+}
+
+.dashboard-header h1 {
+    font-size: clamp(1.6rem, 3vw, 2rem);
+}
+
+.dashboard-header p {
+    margin: 7px 0 0;
+    color: var(--fb-muted);
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.header-actions button,
+.dashboard-header>button {
+    margin-top: 0;
+}
+
+.account-details {
+    color: var(--fb-muted);
+    overflow-wrap: anywhere;
+}
+
+
+/* Dashboard panels */
+
+.dashboard-panel {
+    min-width: 0;
+    margin-bottom: 24px;
+    padding: 28px;
+    border: 1px solid var(--fb-border);
+    border-radius: var(--fb-radius);
+    background: var(--fb-surface);
+    box-shadow: 0 4px 20px rgba(27, 58, 39, 0.025);
+}
+
+.dashboard-panel>p {
+    color: var(--fb-muted);
+}
+
+.dashboard-panel>h3 {
+    margin-top: 28px;
+}
+
+.listings-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.listings-heading h2,
+.listings-heading button {
+    margin: 0;
+}
+
+
+/* Listing, request and assignment cards */
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
+    align-items: start;
+    gap: 20px;
+}
+
+.feature-card {
+    min-width: 0;
+    padding: 24px;
+    border: 1px solid var(--fb-border);
+    border-radius: 16px;
+    background: linear-gradient(180deg, #fff, #fcfdfb);
+    overflow-wrap: anywhere;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.feature-card:hover {
+    border-color: #aac5af;
+    box-shadow: 0 8px 22px rgba(27, 58, 39, 0.045);
+}
+
+.feature-card h3,
+.feature-card h4 {
+    color: var(--fb-green-dark);
+}
+
+.feature-card p {
+    margin-bottom: 9px;
+    color: var(--fb-muted);
+    font-size: 0.94rem;
+    line-height: 1.65;
+}
+
+.feature-card>button {
+    width: 100%;
+    margin-top: 16px;
+}
+
+.feature-card form,
+.feature-card>section {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--fb-border);
+}
+
+.feature-card form h4,
+.feature-card>section h4 {
+    margin-top: 0;
+}
+
+.feature-card form label {
+    margin-bottom: 7px;
+}
+
+.feature-card form button {
+    width: 100%;
+}
+
+.coming-soon {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 11px;
+    border: 1px solid var(--fb-border);
+    border-radius: 999px;
+    background: var(--fb-surface-soft);
+    color: var(--fb-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+
+/* Optional reusable status classes */
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 11px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.status-badge--success {
+    border-color: #bcd7c3;
+    background: #eaf4ed;
+    color: #176443;
+}
+
+.status-badge--warning {
+    border-color: #ead8a6;
+    background: #fff8e8;
+    color: #805616;
+}
+
+.status-badge--neutral {
+    border-color: #d4dde2;
+    background: #eef3f6;
+    color: #465d70;
+}
+
+
+/* Responsive layout */
+
+@media (max-width: 760px) {
+    .dashboard-page {
+        padding: 20px 16px 40px;
+    }
+    .dashboard-header {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 22px;
+    }
+    .dashboard-panel {
+        padding: 22px;
+    }
+    .dashboard-grid {
+        gap: 16px;
+    }
+}
+
+@media (max-width: 480px) {
+    .page {
+        align-items: flex-start;
+        padding: 28px 16px;
+    }
+    .card {
+        padding: 30px 24px;
+        border-radius: 20px;
+    }
+    .dashboard-page {
+        padding: 16px 12px 32px;
+    }
+    .dashboard-header,
+    .dashboard-panel {
+        padding: 20px 16px;
+        border-radius: 16px;
+    }
+    .feature-card {
+        padding: 20px;
+    }
+    .listings-heading {
+        align-items: stretch;
+        flex-direction: column;
+    }
+    .listings-heading>button {
+        width: 100%;
+    }
+    .header-actions {
+        width: 100%;
+    }
+}
+
+
+/* FoodBridge: shared-table login theme */
+
+.foodbridge-auth {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: #fbf8f0;
+}
+
+.foodbridge-story {
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    padding: clamp(28px, 5vw, 72px);
+    background: #163f32;
+    color: #fffaf0;
+}
+
+.foodbridge-story::before,
+.foodbridge-story::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    pointer-events: none;
+}
+
+.foodbridge-story::before {
+    width: 440px;
+    height: 440px;
+    top: -250px;
+    right: -170px;
+    border: 1px solid rgba(227, 237, 207, 0.18);
+    border-radius: 50%;
+    box-shadow: 0 0 0 50px rgba(227, 237, 207, 0.035), 0 0 0 100px rgba(227, 237, 207, 0.025);
+}
+
+.foodbridge-story::after {
+    right: -100px;
+    bottom: -170px;
+    width: 370px;
+    height: 370px;
+    border-radius: 70% 15% 70% 15%;
+    background: rgba(185, 208, 145, 0.065);
+    transform: rotate(-25deg);
+}
+
+.foodbridge-brand {
+    display: inline-flex;
+    align-items: center;
+    align-self: flex-start;
+    gap: 12px;
+    color: #fffaf0;
+    font-size: 1.55rem;
+    font-weight: 800;
+    letter-spacing: -0.045em;
+    text-decoration: none;
+}
+
+.foodbridge-brand:hover {
+    color: #fffaf0;
+}
+
+.foodbridge-brand-mark {
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    border: 1px solid rgba(255, 250, 240, 0.2);
+    border-radius: 15px;
+    background: rgba(255, 250, 240, 0.055);
+    color: #d4e5ac;
+}
+
+.foodbridge-brand-mark svg {
+    width: 34px;
+    height: 34px;
+}
+
+.foodbridge-story-content {
+    width: 100%;
+    max-width: 590px;
+    margin: auto 0;
+    padding: 72px 0;
+}
+
+.foodbridge-eyebrow,
+.foodbridge-form-eyebrow {
+    display: inline-block;
+    font-size: 0.69rem;
+    font-weight: 750;
+    letter-spacing: 0.16em;
+    line-height: 1.7;
+}
+
+.foodbridge-eyebrow {
+    margin-bottom: 24px;
+    color: #d4e5ac;
+}
+
+.foodbridge-story h1 {
+    margin: 0 0 26px;
+    color: #fffaf0;
+    font-size: clamp(2.6rem, 4.4vw, 4.7rem);
+    font-weight: 650;
+    line-height: 1.09;
+    letter-spacing: -0.055em;
+}
+
+.foodbridge-story h1 span {
+    color: #d4e5ac;
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: 400;
+    font-style: italic;
+}
+
+.foodbridge-story-description {
+    max-width: 440px;
+    margin-bottom: 40px;
+    color: #d7e2d7;
+    font-size: 1rem;
+    line-height: 1.85;
+}
+
+.foodbridge-journey {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr) 20px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+    max-width: 470px;
+    padding-top: 28px;
+    border-top: 1px solid rgba(255, 250, 240, 0.16);
+}
+
+.foodbridge-journey-stop {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    min-width: 0;
+}
+
+.foodbridge-journey-icon {
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    margin-bottom: 4px;
+    border: 1px solid rgba(212, 229, 172, 0.18);
+    border-radius: 15px;
+    background: rgba(212, 229, 172, 0.07);
+    color: #d4e5ac;
+}
+
+.foodbridge-journey-icon svg {
+    width: 29px;
+    height: 29px;
+}
+
+.foodbridge-journey-stop>span:not( .foodbridge-journey-icon) {
+    font-size: 0.8rem;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.foodbridge-journey-stop small {
+    color: #c3d3c8;
+    font-size: 0.7rem;
+    line-height: 1.5;
+}
+
+.foodbridge-journey-link {
+    padding-top: 10px;
+    color: #a8c19e;
+    font-size: 1.25rem;
+}
+
+.foodbridge-story-footer {
+    margin: 0;
+    color: #c3d3c8;
+    font-size: 0.78rem;
+}
+
+
+/* Login form */
+
+.foodbridge-login-side {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    padding: 56px clamp(24px, 5vw, 80px);
+    background: radial-gradient( circle at 90% 12%, rgba(222, 161, 89, 0.09), transparent 36%), #fbf8f0;
+}
+
+.foodbridge-login-card {
+    width: 100%;
+    max-width: 420px;
+}
+
+.foodbridge-form-eyebrow {
+    margin-bottom: 16px;
+    color: #875119;
+}
+
+.foodbridge-login-card h2 {
+    margin: 0 0 14px;
+    color: #183f32;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: clamp(2rem, 3vw, 2.8rem);
+    font-weight: 400;
+    line-height: 1.15;
+    letter-spacing: -0.045em;
+}
+
+.foodbridge-login-description {
+    margin-bottom: 32px;
+    color: #626f61;
+    font-size: 0.94rem;
+}
+
+.foodbridge-login-card form {
+    gap: 20px;
+}
+
+.foodbridge-field label {
+    margin-bottom: 8px;
+    color: #314b3c;
+    font-size: 0.85rem;
+}
+
+.foodbridge-field input {
+    min-height: 52px;
+    padding: 14px 16px;
+    border-color: #c7d1c1;
+    border-radius: 12px;
+    background: #fffefb;
+}
+
+.foodbridge-login-button {
+    justify-content: space-between;
+    width: 100%;
+    min-height: 52px;
+    margin-top: 4px;
+    padding: 14px 18px;
+    border-radius: 12px;
+    background: #176443;
+    font-size: 0.95rem;
+}
+
+.foodbridge-login-button span {
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+.foodbridge-signup {
+    margin-top: 32px;
+    padding-top: 26px;
+    border-top: 1px solid #dedfd3;
+    text-align: center;
+}
+
+.foodbridge-signup p {
+    margin-bottom: 8px;
+    color: #626f61;
+    font-size: 0.87rem;
+}
+
+.foodbridge-signup-button {
+    width: 100%;
+    margin-top: 0;
+    border: 1px solid #b7c7b4;
+    background: transparent;
+    color: #234f38;
+}
+
+.foodbridge-signup-button:hover:not(:disabled) {
+    border-color: #779c7d;
+    background: #edf2e7;
+    color: #183f32;
+    box-shadow: none;
+}
+
+.foodbridge-role-note {
+    margin: 26px 0 0;
+    color: #626f61;
+    font-size: 0.76rem;
+    line-height: 1.8;
+    text-align: center;
+}
+
+
+/* Tablet and mobile */
+
+@media (max-width: 900px) {
+    .foodbridge-auth {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .foodbridge-story {
+        padding: 32px;
+    }
+    .foodbridge-story-content {
+        max-width: 650px;
+        padding: 44px 0 32px;
+    }
+    .foodbridge-story h1 {
+        font-size: clamp(2.6rem, 7vw, 4rem);
+    }
+    .foodbridge-story-description {
+        max-width: 560px;
+        margin-bottom: 28px;
+    }
+    .foodbridge-story-footer {
+        margin-top: 12px;
+    }
+    .foodbridge-login-side {
+        padding: 48px 24px;
+    }
+}
+
+@media (max-width: 480px) {
+    .foodbridge-story {
+        padding: 24px;
+    }
+    .foodbridge-brand {
+        font-size: 1.35rem;
+    }
+    .foodbridge-story-content {
+        padding: 34px 0 24px;
+    }
+    .foodbridge-eyebrow {
+        margin-bottom: 16px;
+        font-size: 0.62rem;
+    }
+    .foodbridge-story h1 {
+        font-size: 2.65rem;
+    }
+    .foodbridge-story-description {
+        font-size: 0.9rem;
+        line-height: 1.75;
+    }
+    .foodbridge-journey {
+        gap: 5px;
+        grid-template-columns: minmax(0, 1fr) 12px minmax(0, 1fr) 12px minmax(0, 1fr);
+    }
+    .foodbridge-journey-stop>span:not( .foodbridge-journey-icon) {
+        font-size: 0.72rem;
+    }
+    .foodbridge-journey-stop small {
+        font-size: 0.65rem;
+    }
+    .foodbridge-login-side {
+        padding: 40px 24px;
+    }
+}
