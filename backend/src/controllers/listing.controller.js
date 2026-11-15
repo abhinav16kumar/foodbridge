@@ -277,53 +277,66 @@ async function getAvailableListings(req, res) {
 
 
 // Retrieve listings owned by the authenticated donor.
+// Retrieve listings owned by the authenticated donor.
 async function getMyListings(req, res) {
     try {
-        const pool = await getPool();
+        const result = await pool.query(
+            `
+                SELECT
+                    id,
+                    donor_id,
+                    food_name,
+                    description,
+                    food_type,
+                    quantity,
+                    unit,
+                    pickup_location,
+                    city,
+                    prepared_at,
+                    available_until,
+                    storage_conditions,
+                    allergen_info,
+                    status,
+                    created_at
+                FROM public.listings
+                WHERE donor_id = $1
+                ORDER BY created_at DESC, id DESC
+                LIMIT 100;
+            `, [req.user.userId]
+        );
 
-
-        const result = await pool
-            .request()
-            .input("DonorUserId", sql.Int, req.user.userId)
-            .query(`
-                SELECT TOP (100)
-                    ListingId,
-                    DonorUserId,
-                    Title,
-                    Description,
-                    FoodType,
-                    Quantity,
-                    Unit,
-                    PickupAddress,
-                    City,
-                    PreparedAt,
-                    ExpiresAt,
-                    StorageConditions,
-                    AllergenInfo,
-                    Status,
-                    CreatedAt,
-                    UpdatedAt
-                FROM dbo.FoodListings
-                WHERE DonorUserId = @DonorUserId
-                ORDER BY CreatedAt DESC, ListingId DESC;
-            `);
-
+        const listings = result.rows.map((listing) => ({
+            ListingId: listing.id,
+            DonorUserId: listing.donor_id,
+            Title: listing.food_name,
+            Description: listing.description,
+            FoodType: listing.food_type,
+            Quantity: Number(listing.quantity),
+            Unit: listing.unit,
+            PickupAddress: listing.pickup_location,
+            City: listing.city,
+            PreparedAt: listing.prepared_at,
+            ExpiresAt: listing.available_until,
+            StorageConditions: listing.storage_conditions,
+            AllergenInfo: listing.allergen_info,
+            Status: listing.status,
+            CreatedAt: listing.created_at,
+            UpdatedAt: listing.created_at,
+        }));
 
         return res.status(200).json({
             message: "Your listings retrieved successfully.",
-            count: result.recordset.length,
-            listings: result.recordset,
+            count: listings.length,
+            listings,
         });
     } catch (error) {
         console.error("Get my listings failed:", error.message);
-
 
         return res.status(500).json({
             message: "Unable to retrieve your listings.",
         });
     }
 }
-
 
 // Mark a reserved donation and its accepted request as completed.
 async function completeListing(req, res) {
