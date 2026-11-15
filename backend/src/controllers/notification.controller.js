@@ -1,51 +1,53 @@
-const { sql, getPool } = require("../config/db");
-
+const pool = require("../config/db");
 
 async function createNotification(userId, title, message, type) {
-    const pool = await getPool();
-
-
-    await pool
-        .request()
-        .input("UserId", sql.Int, userId)
-        .input("Title", sql.NVarChar(150), title)
-        .input("Message", sql.NVarChar(500), message)
-        .input("Type", sql.NVarChar(50), type)
-        .query(`
-      INSERT INTO dbo.Notifications
-        (UserId, Title, Message, Type)
-      VALUES
-        (@UserId, @Title, @Message, @Type);
-    `);
+    await pool.query(
+        `
+            INSERT INTO public.notifications (
+                user_id,
+                title,
+                message,
+                type
+            )
+            VALUES (
+                $1,
+                $2,
+                $3,
+                $4
+            );
+        `, [userId, title, message, type]
+    );
 }
-
 
 async function getMyNotifications(req, res) {
     try {
-        const userId = req.user.userId;
-        const pool = await getPool();
+        const result = await pool.query(
+            `
+                SELECT
+                    id,
+                    title,
+                    message,
+                    type,
+                    is_read,
+                    created_at
+                FROM public.notifications
+                WHERE user_id = $1
+                ORDER BY created_at DESC;
+            `, [req.user.userId]
+        );
 
+        const notifications = result.rows.map((notification) => ({
+            NotificationId: notification.id,
+            Title: notification.title,
+            Message: notification.message,
+            Type: notification.type,
+            IsRead: notification.is_read,
+            CreatedAt: notification.created_at,
+        }));
 
-        const result = await pool
-            .request()
-            .input("UserId", sql.Int, userId)
-            .query(`
-        SELECT
-          NotificationId,
-          Title,
-          Message,
-          Type,
-          IsRead,
-          CreatedAt
-        FROM dbo.Notifications
-        WHERE UserId = @UserId
-        ORDER BY CreatedAt DESC;
-      `);
-
-
-        const notifications = result.recordset;
-        const unreadCount = notifications.filter((n) => n.IsRead === 0).length;
-
+        const unreadCount = notifications.filter(
+            (notification) => notification.IsRead === false
+        ).length;
 
         return res.status(200).json({
             message: "Notifications retrieved successfully.",
@@ -53,8 +55,10 @@ async function getMyNotifications(req, res) {
             notifications,
         });
     } catch (error) {
-        console.error("Get notifications failed:", error.message);
-
+        console.error(
+            "Get notifications failed:",
+            error.message
+        );
 
         return res.status(500).json({
             message: "Unable to load notifications.",
@@ -62,10 +66,8 @@ async function getMyNotifications(req, res) {
     }
 }
 
-
 async function markNotificationRead(req, res) {
     const notificationId = Number(req.params.notificationId);
-
 
     if (!Number.isInteger(notificationId) || notificationId <= 0) {
         return res.status(400).json({
@@ -73,44 +75,37 @@ async function markNotificationRead(req, res) {
         });
     }
 
-
     try {
-        const pool = await getPool();
+        const result = await pool.query(
+            `
+                UPDATE public.notifications
+                SET is_read = true
+                WHERE id = $1
+                    AND user_id = $2
+                RETURNING id;
+            `, [notificationId, req.user.userId]
+        );
 
-
-        const result = await pool
-            .request()
-            .input("NotificationId", sql.Int, notificationId)
-            .input("UserId", sql.Int, req.user.userId)
-            .query(`
-        UPDATE dbo.Notifications
-        SET IsRead = 1
-        OUTPUT INSERTED.NotificationId
-        WHERE NotificationId = @NotificationId
-          AND UserId = @UserId;
-      `);
-
-
-        if (result.recordset.length === 0) {
+        if (result.rows.length === 0) {
             return res.status(404).json({
                 message: "Notification not found.",
             });
         }
 
-
         return res.status(200).json({
             message: "Notification marked as read.",
         });
     } catch (error) {
-        console.error("Mark notification read failed:", error.message);
-
+        console.error(
+            "Mark notification read failed:",
+            error.message
+        );
 
         return res.status(500).json({
             message: "Unable to update notification.",
         });
     }
 }
-
 
 module.exports = {
     createNotification,
