@@ -233,48 +233,62 @@ async function createListing(req, res) {
 }
 
 // Browse available, unexpired listings.
+// Browse available, unexpired listings.
 async function getAvailableListings(req, res) {
     try {
-        const pool = await getPool();
+        const result = await pool.query(
+            `
+                SELECT
+                    id,
+                    food_name,
+                    description,
+                    food_type,
+                    quantity,
+                    unit,
+                    city,
+                    prepared_at,
+                    available_until,
+                    storage_conditions,
+                    allergen_info,
+                    status,
+                    created_at
+                FROM public.listings
+                WHERE status = 'available'
+                    AND available_until > NOW()
+                ORDER BY available_until ASC, id ASC
+                LIMIT 100;
+            `
+        );
 
-
-        const result = await pool.request().query(`
-            SELECT TOP (100)
-                ListingId,
-                Title,
-                Description,
-                FoodType,
-                Quantity,
-                Unit,
-                City,
-                PreparedAt,
-                ExpiresAt,
-                StorageConditions,
-                AllergenInfo,
-                Status,
-                CreatedAt
-            FROM dbo.FoodListings
-            WHERE Status = 'available'
-                AND ExpiresAt > SYSUTCDATETIME()
-            ORDER BY ExpiresAt ASC, ListingId ASC;
-        `);
-
+        const listings = result.rows.map((listing) => ({
+            ListingId: listing.id,
+            Title: listing.food_name,
+            Description: listing.description,
+            FoodType: listing.food_type,
+            Quantity: Number(listing.quantity),
+            Unit: listing.unit,
+            City: listing.city,
+            PreparedAt: listing.prepared_at,
+            ExpiresAt: listing.available_until,
+            StorageConditions: listing.storage_conditions,
+            AllergenInfo: listing.allergen_info,
+            Status: listing.status,
+            CreatedAt: listing.created_at,
+        }));
 
         return res.status(200).json({
             message: "Available listings retrieved successfully.",
-            count: result.recordset.length,
-            listings: result.recordset,
+            count: listings.length,
+            listings,
         });
     } catch (error) {
         console.error("Get available listings failed:", error.message);
-
 
         return res.status(500).json({
             message: "Unable to retrieve available listings.",
         });
     }
 }
-
 
 // Retrieve listings owned by the authenticated donor.
 // Retrieve listings owned by the authenticated donor.
@@ -339,9 +353,9 @@ async function getMyListings(req, res) {
 }
 
 // Mark a reserved donation and its accepted request as completed.
+// Mark a reserved donation and its accepted request as completed.
 async function completeListing(req, res) {
     const listingId = Number(req.params.listingId);
-
 
     if (!Number.isInteger(listingId) || listingId <= 0) {
         return res.status(400).json({
@@ -349,90 +363,70 @@ async function completeListing(req, res) {
         });
     }
 
-
     const donorUserId = req.user.userId;
-    let transaction;
-    let transactionOpen = false;
-
+    let client;
 
     try {
-        const pool = await getPool();
-        transaction = new sql.Transaction(pool);
+        client = await pool.connect();
 
+        await client.query("BEGIN");
 
-        await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-        transactionOpen = true;
+        const listingResult = await client.query(
+            `
+                SELECT
+                    id,
+                    status
+                FROM public.listings
+                WHERE id = $1
+                    AND donor_id = $2
+                FOR UPDATE;
+            `, [listingId, donorUserId]
+        );
 
-
-        const listingResult = await new sql.Request(transaction)
-            .input("ListingId", sql.Int, listingId)
-            .input("DonorUserId", sql.Int, donorUserId)
-            .query(`
-                SELECT ListingId, Status
-                FROM dbo.FoodListings
-                WHERE ListingId = @ListingId
-                    AND DonorUserId = @DonorUserId;
-            `);
-
-
-        const listing = listingResult.recordset[0];
-
+        const listing = listingResult.rows[0];
 
         if (!listing) {
-            await transaction.rollback();
-            transactionOpen = false;
-
+            await client.query("ROLLBACK");
 
             return res.status(404).json({
                 message: "Listing not found for this donor.",
             });
         }
 
-
-        if (listing.Status !== "reserved") {
-            await transaction.rollback();
-            transactionOpen = false;
-
+        if (listing.status !== "reserved") {
+            await client.query("ROLLBACK");
 
             return res.status(409).json({
                 message: "Only reserved donations can be marked as completed.",
             });
         }
 
+        await client.query(
+            `
+                UPDATE public.listings
+                SET status = 'completed'
+                WHERE id = $1;
+            `, [listingId]
+        );
 
-        await new sql.Request(transaction)
-            .input("ListingId", sql.Int, listingId)
-            .query(`
-                UPDATE dbo.FoodListings
-                SET Status = 'completed',
-                    UpdatedAt = SYSUTCDATETIME()
-                WHERE ListingId = @ListingId;
-            `);
+        await client.query(
+            `
+                UPDATE public.requests
+                SET status = 'completed'
+                WHERE listing_id = $1
+                    AND status = 'accepted';
+            `, [listingId]
+        );
 
-
-        await new sql.Request(transaction)
-            .input("ListingId", sql.Int, listingId)
-            .query(`
-                UPDATE dr
-                SET dr.Status = 'completed',
-                    dr.UpdatedAt = SYSUTCDATETIME()
-                FROM dbo.DonationRequests dr
-                WHERE dr.ListingId = @ListingId
-                    AND dr.Status = 'accepted';
-            `);
-
-
-        await transaction.commit();
-        transactionOpen = false;
-
+        await client.query("COMMIT");
 
         return res.json({
             message: "Donation marked as completed.",
         });
     } catch (error) {
-        if (transactionOpen) {
+        if (client) {
             try {
-                await transaction.rollback();
+                await client.query("ROLLBACK");
             } catch (rollbackError) {
                 console.error(
                     "Complete listing rollback failed:",
@@ -441,13 +435,15 @@ async function completeListing(req, res) {
             }
         }
 
-
         console.error("Complete listing failed:", error.message);
-
 
         return res.status(500).json({
             message: "Unable to mark donation as completed.",
         });
+    } finally {
+        if (client) {
+            client.release();
+        }
     }
 }
 // Admin: retrieve the latest 100 listings across all statuses.
