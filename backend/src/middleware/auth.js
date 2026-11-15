@@ -1,5 +1,5 @@
 const jwt = require("jsonwebtoken");
-const { sql, getPool } = require("../config/db");
+const pool = require("../config/db");
 
 async function authenticate(req, res, next) {
     const authorization = req.headers.authorization;
@@ -37,7 +37,7 @@ async function authenticate(req, res, next) {
             issuer: "foodbridge-api",
             audience: "foodbridge-app",
         });
-    } catch (error) {
+    } catch {
         return res.status(401).json({
             message: "Invalid or expired access token. Please log in again.",
         });
@@ -64,37 +64,34 @@ async function authenticate(req, res, next) {
     }
 
     try {
-        const pool = await getPool();
-
-        const result = await pool
-            .request()
-            .input("UserId", sql.Int, userId)
-            .query(`
+        const result = await pool.query(
+            `
         SELECT
-          UserId,
-          FullName,
-          Email,
-          Role,
-          IsActive,
-          IsVerified
-        FROM dbo.Users
-        WHERE UserId = @UserId;
-      `);
+          user_id,
+          full_name,
+          email,
+          role,
+          is_active,
+          is_verified
+        FROM users
+        WHERE user_id = $1;
+      `, [userId]
+        );
 
-        const user = result.recordset[0];
+        const user = result.rows[0];
 
-        if (!user || !user.IsActive) {
+        if (!user || !user.is_active) {
             return res.status(401).json({
                 message: "Account unavailable. Please log in again.",
             });
         }
 
         req.user = {
-            userId: user.UserId,
-            fullName: user.FullName,
-            email: user.Email,
-            role: user.Role,
-            isVerified: user.IsVerified,
+            userId: user.user_id,
+            fullName: user.full_name,
+            email: user.email,
+            role: user.role,
+            isVerified: user.is_verified,
         };
 
         return next();
