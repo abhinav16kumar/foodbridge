@@ -447,39 +447,57 @@ async function completeListing(req, res) {
     }
 }
 // Admin: retrieve the latest 100 listings across all statuses.
+// Admin: retrieve the latest 100 listings across all statuses.
 async function getAdminListings(req, res) {
     try {
-        const pool = await getPool();
+        const result = await pool.query(
+            `
+                SELECT
+                    l.id,
+                    l.donor_id,
+                    l.food_name,
+                    l.description,
+                    l.food_type,
+                    l.quantity,
+                    l.unit,
+                    l.city,
+                    l.available_until,
+                    l.status,
+                    l.created_at,
+                    u.full_name,
+                    CASE
+                        WHEN l.available_until <= NOW() THEN true
+                        ELSE false
+                    END AS is_expired
+                FROM public.listings l
+                INNER JOIN public.users u
+                    ON u.user_id = l.donor_id
+                ORDER BY l.created_at DESC, l.id DESC
+                LIMIT 100;
+            `
+        );
 
-        const result = await pool.request().query(`
-      SELECT TOP (100)
-        fl.ListingId,
-        fl.DonorUserId,
-        fl.Title,
-        fl.Description,
-        fl.FoodType,
-        fl.Quantity,
-        fl.Unit,
-        fl.City,
-        fl.ExpiresAt,
-        fl.Status,
-        fl.CreatedAt,
-        fl.UpdatedAt,
-        u.FullName AS DonorName,
-        CASE
-          WHEN fl.ExpiresAt <= SYSUTCDATETIME() THEN 1
-          ELSE 0
-        END AS IsExpired
-      FROM dbo.FoodListings fl
-      INNER JOIN dbo.Users u
-        ON u.UserId = fl.DonorUserId
-      ORDER BY fl.CreatedAt DESC, fl.ListingId DESC;
-    `);
+        const listings = result.rows.map((listing) => ({
+            ListingId: listing.id,
+            DonorUserId: listing.donor_id,
+            Title: listing.food_name,
+            Description: listing.description,
+            FoodType: listing.food_type,
+            Quantity: Number(listing.quantity),
+            Unit: listing.unit,
+            City: listing.city,
+            ExpiresAt: listing.available_until,
+            Status: listing.status,
+            CreatedAt: listing.created_at,
+            UpdatedAt: listing.created_at,
+            DonorName: listing.full_name,
+            IsExpired: listing.is_expired,
+        }));
 
         return res.status(200).json({
             message: "Admin listings retrieved successfully.",
-            count: result.recordset.length,
-            listings: result.recordset,
+            count: listings.length,
+            listings,
         });
     } catch (error) {
         console.error("Get admin listings failed:", error.message);
