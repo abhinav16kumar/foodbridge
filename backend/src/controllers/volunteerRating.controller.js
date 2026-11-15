@@ -1,4 +1,4 @@
-const { sql, getPool } = require("../config/db");
+const pool = require("../config/db");
 
 function isValidRating(value) {
     return (
@@ -56,111 +56,118 @@ async function createVolunteerRating(req, res) {
         }
     }
 
+    let client;
+
     try {
-        const pool = await getPool();
+        client = await pool.connect();
 
-        const result = await pool
-            .request()
-            .input("AssignmentId", sql.Int, assignmentId)
-            .input("NgoUserId", sql.Int, req.user.userId)
-            .input("Rating", sql.TinyInt, rating)
-            .input("Comment", sql.NVarChar(sql.MAX), safeComment)
-            .query(`
-        SET XACT_ABORT ON;
+        await client.query("BEGIN");
 
-        BEGIN TRY
-          BEGIN TRANSACTION;
+        const assignmentResult = await client.query(
+            `
+                SELECT
+                    p.id,
+                    p.volunteer_id,
+                    r.ngo_id
+                FROM public.pickups p
+                INNER JOIN public.requests r
+                    ON r.id = p.request_id
+                WHERE p.id = $1
+                    AND p.status = 'delivered'
+                    AND r.ngo_id = $2
+                FOR UPDATE OF p, r;
+            `, [assignmentId, req.user.userId]
+        );
 
-          DECLARE @VolunteerUserId INT;
+        const assignment = assignmentResult.rows[0];
 
-          SELECT
-            @VolunteerUserId = pa.VolunteerUserId
-          FROM dbo.PickupAssignments pa WITH (UPDLOCK, HOLDLOCK)
-          INNER JOIN dbo.DonationRequests dr WITH (UPDLOCK, HOLDLOCK)
-            ON dr.RequestId = pa.RequestId
-          WHERE pa.AssignmentId = @AssignmentId
-            AND pa.Status = 'delivered'
-            AND dr.NgoUserId = @NgoUserId;
+        if (!assignment) {
+            await client.query("ROLLBACK");
 
-          IF @VolunteerUserId IS NULL
-          BEGIN
-            ROLLBACK TRANSACTION;
-            SELECT 'not_rateable' AS Outcome;
-            RETURN;
-          END;
-
-          IF EXISTS (
-            SELECT 1
-            FROM dbo.VolunteerRatings WITH (UPDLOCK, HOLDLOCK)
-            WHERE AssignmentId = @AssignmentId
-          )
-          BEGIN
-            ROLLBACK TRANSACTION;
-            SELECT 'already_rated' AS Outcome;
-            RETURN;
-          END;
-
-          INSERT INTO dbo.VolunteerRatings (
-            AssignmentId,
-            NgoUserId,
-            VolunteerUserId,
-            Rating,
-            Comment
-          )
-          OUTPUT
-            inserted.RatingId,
-            inserted.AssignmentId,
-            inserted.NgoUserId,
-            inserted.VolunteerUserId,
-            inserted.Rating,
-            inserted.Comment,
-            inserted.CreatedAt
-          VALUES (
-            @AssignmentId,
-            @NgoUserId,
-            @VolunteerUserId,
-            @Rating,
-            @Comment
-          );
-
-          COMMIT TRANSACTION;
-        END TRY
-        BEGIN CATCH
-          IF XACT_STATE() <> 0
-            ROLLBACK TRANSACTION;
-
-          THROW;
-        END CATCH;
-      `);
-
-        const outcome = result.recordset[0];
-
-        if (outcome.Outcome === "not_rateable") {
             return res.status(409).json({
                 message: "This assignment cannot be rated. It must be delivered and belong to your NGO.",
             });
         }
 
-        if (outcome.Outcome === "already_rated") {
+        const existingResult = await client.query(
+            `
+                SELECT
+                    id
+                FROM public.volunteer_ratings
+                WHERE assignment_id = $1;
+            `, [assignmentId]
+        );
+
+        if (existingResult.rows.length > 0) {
+            await client.query("ROLLBACK");
+
             return res.status(409).json({
                 message: "This delivery has already been rated.",
             });
         }
 
-        const { Outcome, ...savedRating } = outcome;
+        const result = await client.query(
+            `
+                INSERT INTO public.volunteer_ratings (
+                    assignment_id,
+                    ngo_user_id,
+                    volunteer_user_id,
+                    rating,
+                    comment
+                )
+                VALUES (
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    $5
+                )
+                RETURNING
+                    id,
+                    assignment_id,
+                    ngo_user_id,
+                    volunteer_user_id,
+                    rating,
+                    comment,
+                    created_at;
+            `, [
+                assignmentId,
+                req.user.userId,
+                assignment.volunteer_id,
+                rating,
+                safeComment,
+            ]
+        );
+
+        await client.query("COMMIT");
+
+        const savedRating = result.rows[0];
 
         return res.status(201).json({
             message: "Volunteer rating submitted successfully.",
-            rating: savedRating,
+            rating: {
+                RatingId: savedRating.id,
+                AssignmentId: savedRating.assignment_id,
+                NgoUserId: savedRating.ngo_user_id,
+                VolunteerUserId: savedRating.volunteer_user_id,
+                Rating: savedRating.rating,
+                Comment: savedRating.comment,
+                CreatedAt: savedRating.created_at,
+            },
         });
     } catch (error) {
-        const errorNumber =
-            error.number ||
-            (error.originalError &&
-                error.originalError.number) ||
-            null;
+        if (client) {
+            try {
+                await client.query("ROLLBACK");
+            } catch (rollbackError) {
+                console.error(
+                    "Create volunteer rating rollback failed:",
+                    rollbackError.message
+                );
+            }
+        }
 
-        if (errorNumber === 2601 || errorNumber === 2627) {
+        if (error && error.code === "23505") {
             return res.status(409).json({
                 message: "This delivery has already been rated.",
             });
@@ -174,6 +181,10 @@ async function createVolunteerRating(req, res) {
         return res.status(500).json({
             message: "Unable to submit the rating. Refresh and try again.",
         });
+    } finally {
+        if (client) {
+            client.release();
+        }
     }
 }
 
@@ -197,26 +208,24 @@ async function getVolunteerRatingSummary(req, res) {
     }
 
     try {
-        const pool = await getPool();
+        const result = await pool.query(
+            `
+                SELECT
+                    COUNT(*) AS rating_count,
+                    AVG(rating) AS average_rating
+                FROM public.volunteer_ratings
+                WHERE volunteer_user_id = $1;
+            `, [volunteerId]
+        );
 
-        const result = await pool
-            .request()
-            .input("VolunteerUserId", sql.Int, volunteerId)
-            .query(`
-        SELECT
-          COUNT(*) AS ratingCount,
-          CAST(AVG(CAST(Rating AS DECIMAL(5,2))) AS DECIMAL(5,2)) AS averageRating
-        FROM dbo.VolunteerRatings
-        WHERE VolunteerUserId = @VolunteerUserId;
-      `);
-
-        const summary = result.recordset[0];
+        const summary = result.rows[0];
 
         return res.status(200).json({
             message: "Volunteer rating summary retrieved successfully.",
             volunteerId,
-            ratingCount: summary.ratingCount || 0,
-            averageRating: summary.averageRating || null,
+            ratingCount: Number(summary.rating_count),
+            averageRating: summary.average_rating == null ?
+                null : Number(summary.average_rating),
         });
     } catch (error) {
         console.error(
