@@ -1,10 +1,12 @@
 const argon2 = require("argon2");
 const jwt = require("jsonwebtoken");
-const { sql, getPool } = require("../config/db");
+const pool = require("../config/db");
+
 
 // REGISTER
 async function register(req, res) {
     const { fullName, email, password, role, phone } = req.body || {};
+
 
     if (
         typeof fullName !== "string" ||
@@ -17,15 +19,18 @@ async function register(req, res) {
         });
     }
 
+
     const cleanName = fullName.trim();
     const cleanEmail = email.trim().toLowerCase();
     const cleanRole = role.trim().toLowerCase();
+
 
     if (cleanName.length < 2 || cleanName.length > 100) {
         return res.status(400).json({
             message: "Full name must contain between 2 and 100 characters.",
         });
     }
+
 
     if (
         cleanEmail.length > 254 ||
@@ -36,17 +41,20 @@ async function register(req, res) {
         });
     }
 
+
     if (password.length < 15 || password.length > 128) {
         return res.status(400).json({
             message: "Password must contain between 15 and 128 characters.",
         });
     }
 
+
     if (!["donor", "ngo", "volunteer"].includes(cleanRole)) {
         return res.status(400).json({
             message: "Role must be donor, ngo, or volunteer.",
         });
     }
+
 
     if (
         phone != null &&
@@ -57,8 +65,10 @@ async function register(req, res) {
         });
     }
 
+
     const cleanPhone =
         typeof phone === "string" ? phone.trim() || null : null;
+
 
     try {
         const passwordHash = await argon2.hash(password, {
@@ -68,52 +78,52 @@ async function register(req, res) {
             parallelism: 1,
         });
 
-        const pool = await getPool();
 
-        const result = await pool
-            .request()
-            .input("FullName", sql.NVarChar(100), cleanName)
-            .input("Email", sql.NVarChar(254), cleanEmail)
-            .input("PasswordHash", sql.NVarChar(255), passwordHash)
-            .input("Role", sql.VarChar(20), cleanRole)
-            .input("Phone", sql.NVarChar(20), cleanPhone)
-            .query(`
-  INSERT INTO dbo.Users (
-    FullName,
-    Email,
-    PasswordHash,
-    Role,
-    Phone,
-    IsVerified
-  )
-  OUTPUT
-    INSERTED.UserId,
-    INSERTED.FullName,
-    INSERTED.Email,
-    INSERTED.Role,
-    INSERTED.IsVerified
-  VALUES (
-    @FullName,
-    @Email,
-    @PasswordHash,
-    @Role,
-    @Phone,
-    0
-  );
-`);
+        const result = await pool.query(
+            `
+      INSERT INTO users (
+        full_name,
+        email,
+        password_hash,
+        role,
+        phone,
+        is_verified
+      )
+      VALUES ($1, $2, $3, $4, $5, FALSE)
+             RETURNING
+        user_id,
+        full_name,
+        email,
+        role,
+        is_verified;
+      `, [cleanName, cleanEmail, passwordHash, cleanRole, cleanPhone]
+        );
+
+
+        const user = result.rows[0];
+
 
         return res.status(201).json({
             message: "Account created successfully.",
-            user: result.recordset[0],
+            user: {
+                userId: user.user_id,
+                fullName: user.full_name,
+                email: user.email,
+                role: user.role,
+                isVerified: user.is_verified,
+            },
         });
     } catch (error) {
-        if (error.number === 2627 || error.number === 2601) {
+        if (error.code === "23505") {
             return res.status(409).json({
                 message: "An account with this email already exists.",
             });
         }
 
+
         console.error("Registration failed:", error.message);
+        console.error("REGISTRATION ERROR:", error);
+
 
         return res.status(500).json({
             message: "Unable to create account. Please try again later.",
@@ -121,9 +131,11 @@ async function register(req, res) {
     }
 }
 
+
 // LOGIN
 async function login(req, res) {
     const { email, password } = req.body || {};
+
 
     if (
         typeof email !== "string" ||
@@ -138,32 +150,34 @@ async function login(req, res) {
         });
     }
 
+
     const cleanEmail = email.trim().toLowerCase();
+
 
     try {
         if (!process.env.JWT_SECRET) {
             throw new Error("JWT_SECRET is not configured.");
         }
 
-        const pool = await getPool();
 
-        const result = await pool
-            .request()
-            .input("Email", sql.NVarChar(254), cleanEmail)
-            .query(`
-        SELECT
-          UserId,
-          FullName,
-          Email,
-          PasswordHash,
-          Role,
-          IsActive,
-          IsVerified
-        FROM dbo.Users
-        WHERE Email = @Email;
-      `);
+        const result = await pool.query(
+            `
+              SELECT
+        user_id,
+        full_name,
+        email,
+        password_hash,
+        role,
+        is_active,
+        is_verified
+      FROM users
+      WHERE email = $1;
+      `, [cleanEmail]
+        );
 
-        const user = result.recordset[0];
+
+        const user = result.rows[0];
+
 
         if (!user) {
             return res.status(401).json({
@@ -171,40 +185,44 @@ async function login(req, res) {
             });
         }
 
+
         const passwordMatches = await argon2.verify(
-            user.PasswordHash,
+            user.password_hash,
             password
         );
 
-        if (!passwordMatches || !user.IsActive) {
+
+        if (!passwordMatches || !user.is_active) {
             return res.status(401).json({
                 message: "Invalid email or password.",
             });
         }
 
-        const token = jwt.sign({},
-            process.env.JWT_SECRET, {
-                algorithm: "HS256",
-                subject: String(user.UserId),
-                issuer: "foodbridge-api",
-                audience: "foodbridge-app",
-                expiresIn: "15m",
-            }
-        );
+
+        const token = jwt.sign({}, process.env.JWT_SECRET, {
+            algorithm: "HS256",
+            subject: String(user.user_id),
+            issuer: "foodbridge-api",
+            audience: "foodbridge-app",
+            expiresIn: "15m",
+        });
+
 
         return res.status(200).json({
             message: "Login successful.",
             token,
             user: {
-                userId: user.UserId,
-                fullName: user.FullName,
-                email: user.Email,
-                role: user.Role,
-                isVerified: user.IsVerified,
+                userId: user.user_id,
+                fullName: user.full_name,
+                email: user.email,
+                role: user.role,
+                isVerified: user.is_verified,
             },
         });
     } catch (error) {
         console.error("Login failed:", error.message);
+        console.error("LOGIN ERROR:", error);
+
 
         return res.status(500).json({
             message: "Unable to log in. Please try again later.",
@@ -212,5 +230,5 @@ async function login(req, res) {
     }
 }
 
-// Export both functions.
+
 module.exports = { register, login };
