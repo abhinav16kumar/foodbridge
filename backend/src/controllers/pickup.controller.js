@@ -1,55 +1,67 @@
-const { sql, getPool } = require("../config/db");
+const pool = require("../config/db");
 
 async function getAvailablePickups(req, res) {
     try {
-        const pool = await getPool();
+        const result = await pool.query(
+            `
+                SELECT
+                    r.id,
+                    l.id AS listing_id,
+                    l.food_name,
+                    l.food_type,
+                    l.quantity,
+                    l.unit,
+                    l.city,
+                    l.available_until,
+                    l.storage_conditions,
+                    l.allergen_info,
+                    donor.full_name AS donor_name,
+                    ngo.full_name AS ngo_name
+                FROM public.requests r
+                INNER JOIN public.listings l
+                    ON l.id = r.listing_id
+                INNER JOIN public.users donor
+                    ON donor.user_id = l.donor_id
+                INNER JOIN public.users ngo
+                    ON ngo.user_id = r.ngo_id
+                WHERE r.status = 'accepted'
+                    AND l.status = 'reserved'
+                    AND l.available_until > NOW()
+                    AND NULLIF(BTRIM(r.delivery_address), '') IS NOT NULL
+                    AND donor.is_active = true
+                    AND ngo.is_active = true
+                    AND ngo.is_verified = true
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM public.pickups p
+                        WHERE p.request_id = r.id
+                    )
+                ORDER BY
+                    l.available_until ASC,
+                    r.id ASC
+                LIMIT 100;
+            `
+        );
 
-        const result = await pool.request().query(`
-      SELECT TOP (100)
-        dr.RequestId,
-        fl.ListingId,
-        fl.Title,
-        fl.FoodType,
-        fl.Quantity,
-        fl.Unit,
-        fl.City,
-        fl.ExpiresAt,
-        fl.StorageConditions,
-        fl.AllergenInfo,
-        donor.FullName AS DonorName,
-        ngo.FullName AS NgoName
-      FROM dbo.DonationRequests dr
-      INNER JOIN dbo.FoodListings fl
-        ON fl.ListingId = dr.ListingId
-      INNER JOIN dbo.Users donor
-        ON donor.UserId = fl.DonorUserId
-      INNER JOIN dbo.Users ngo
-        ON ngo.UserId = dr.NgoUserId
-      WHERE dr.Status = 'accepted'
-        AND fl.Status = 'reserved'
-        AND fl.ExpiresAt > SYSUTCDATETIME()
-        AND NULLIF(
-          LTRIM(RTRIM(dr.DeliveryAddress)),
-          ''
-        ) IS NOT NULL
-        AND donor.IsActive = 1
-        AND ngo.IsActive = 1
-        AND ngo.IsVerified = 1
-        AND NOT EXISTS (
-          SELECT 1
-          FROM dbo.PickupAssignments pa
-          WHERE pa.ListingId = fl.ListingId
-             OR pa.RequestId = dr.RequestId
-        )
-      ORDER BY
-        fl.ExpiresAt ASC,
-        dr.RequestId ASC;
-    `);
+        const pickups = result.rows.map((pickup) => ({
+            RequestId: pickup.id,
+            ListingId: pickup.listing_id,
+            Title: pickup.food_name,
+            FoodType: pickup.food_type,
+            Quantity: Number(pickup.quantity),
+            Unit: pickup.unit,
+            City: pickup.city,
+            ExpiresAt: pickup.available_until,
+            StorageConditions: pickup.storage_conditions,
+            AllergenInfo: pickup.allergen_info,
+            DonorName: pickup.donor_name,
+            NgoName: pickup.ngo_name,
+        }));
 
         return res.status(200).json({
             message: "Available pickups retrieved successfully.",
-            count: result.recordset.length,
-            pickups: result.recordset,
+            count: pickups.length,
+            pickups,
         });
     } catch (error) {
         console.error(
@@ -62,6 +74,7 @@ async function getAvailablePickups(req, res) {
         });
     }
 }
+
 async function claimPickup(req, res) {
     const rawRequestId = req.params.requestId;
 
@@ -73,202 +86,231 @@ async function claimPickup(req, res) {
 
     const requestId = Number(rawRequestId);
 
-    if (!Number.isSafeInteger(requestId) || requestId > 2147483647) {
+    if (!Number.isSafeInteger(requestId) ||
+        requestId > 2147483647
+    ) {
         return res.status(400).json({
             message: "Invalid request ID.",
         });
     }
 
+    let client;
+
     try {
-        const pool = await getPool();
+        client = await pool.connect();
 
-        const result = await pool
-            .request()
-            .input("RequestId", sql.Int, requestId)
-            .input("VolunteerUserId", sql.Int, req.user.userId)
-            .query(`
-        SET XACT_ABORT ON;
+        await client.query("BEGIN");
 
-        BEGIN TRY
-          BEGIN TRANSACTION;
+        const requestResult = await client.query(
+            `
+                SELECT
+                    r.id,
+                    r.ngo_id,
+                    l.id AS listing_id,
+                    l.donor_id,
+                    l.status AS listing_status,
+                    l.available_until,
+                    r.delivery_address,
+                    donor.is_active AS donor_is_active,
+                    ngo.is_active AS ngo_is_active,
+                    ngo.is_verified AS ngo_is_verified
+                FROM public.requests r
+                INNER JOIN public.listings l
+                    ON l.id = r.listing_id
+                INNER JOIN public.users donor
+                    ON donor.user_id = l.donor_id
+                INNER JOIN public.users ngo
+                    ON ngo.user_id = r.ngo_id
+                WHERE r.id = $1
+                FOR UPDATE OF r, l;
+            `, [requestId]
+        );
 
-          DECLARE @ListingId INT;
-          DECLARE @NewAssignment TABLE (
-            AssignmentId INT,
-            RequestId INT,
-            ListingId INT,
-            VolunteerUserId INT,
-            Status VARCHAR(20),
-            AssignedAt DATETIME2
-          );
+        const request = requestResult.rows[0];
 
-          SELECT @ListingId = fl.ListingId
-          FROM dbo.DonationRequests dr WITH (UPDLOCK, HOLDLOCK)
-          INNER JOIN dbo.FoodListings fl WITH (UPDLOCK, HOLDLOCK)
-            ON fl.ListingId = dr.ListingId
-          INNER JOIN dbo.Users donor WITH (HOLDLOCK)
-            ON donor.UserId = fl.DonorUserId
-          INNER JOIN dbo.Users ngo WITH (HOLDLOCK)
-            ON ngo.UserId = dr.NgoUserId
-          WHERE dr.RequestId = @RequestId
-            AND dr.Status = 'accepted'
-            AND fl.Status = 'reserved'
-            AND fl.ExpiresAt > SYSUTCDATETIME()
-            AND NULLIF(
-              LTRIM(RTRIM(dr.DeliveryAddress)), ''
-            ) IS NOT NULL
-            AND donor.IsActive = 1
-            AND ngo.IsActive = 1
-            AND ngo.IsVerified = 1;
+        const isEligible =
+            request &&
+            request.status === "accepted" &&
+            request.listing_status === "reserved" &&
+            request.available_until != null &&
+            new Date(
+                request.available_until
+            ).getTime() > Date.now() &&
+            request.delivery_address != null &&
+            request.delivery_address.trim() !== "" &&
+            request.donor_is_active === true &&
+            request.ngo_is_active === true &&
+            request.ngo_is_verified === true;
 
-          IF @ListingId IS NULL
-          BEGIN
-            ROLLBACK TRANSACTION;
-            SELECT 'unavailable' AS Outcome;
-            RETURN;
-          END;
+        if (!isEligible) {
+            await client.query("ROLLBACK");
 
-          IF EXISTS (
-            SELECT 1
-            FROM dbo.PickupAssignments WITH (UPDLOCK, HOLDLOCK)
-            WHERE ListingId = @ListingId
-               OR RequestId = @RequestId
-          )
-          BEGIN
-            ROLLBACK TRANSACTION;
-            SELECT 'claimed' AS Outcome;
-            RETURN;
-          END;
-
-          INSERT INTO dbo.PickupAssignments (
-            RequestId,
-            ListingId,
-            VolunteerUserId
-          )
-          OUTPUT
-            inserted.AssignmentId,
-            inserted.RequestId,
-            inserted.ListingId,
-            inserted.VolunteerUserId,
-            inserted.Status,
-            inserted.AssignedAt
-          INTO @NewAssignment
-          VALUES (
-            @RequestId,
-            @ListingId,
-            @VolunteerUserId
-          );
-
-          COMMIT TRANSACTION;
-
-          SELECT 'created' AS Outcome, *
-          FROM @NewAssignment;
-        END TRY
-        BEGIN CATCH
-          IF XACT_STATE() <> 0
-            ROLLBACK TRANSACTION;
-
-          THROW;
-        END CATCH;
-      `);
-
-        const assignment = result.recordset[0];
-
-        if (assignment.Outcome === "unavailable") {
             return res.status(409).json({
                 message: "This donation is no longer eligible for pickup. Refresh the list.",
             });
         }
 
-        if (assignment.Outcome === "claimed") {
+        const existingResult = await client.query(
+            `
+                SELECT
+                    id
+                FROM public.pickups
+                WHERE request_id = $1;
+            `, [requestId]
+        );
+
+        if (existingResult.rows.length > 0) {
+            await client.query("ROLLBACK");
+
             return res.status(409).json({
                 message: "This pickup has already been claimed. Refresh the list.",
             });
         }
 
-        const { Outcome, ...savedAssignment } = assignment;
+        const insertResult = await client.query(
+            `
+                INSERT INTO public.pickups (
+                    request_id,
+                    volunteer_id,
+                    status
+                )
+                VALUES (
+                    $1,
+                    $2,
+                    'assigned'
+                )
+                RETURNING
+                    id,
+                    request_id,
+                    volunteer_id,
+                    status,
+                    created_at;
+            `, [requestId, req.user.userId]
+        );
+
+        await client.query("COMMIT");
+
+        const pickup = insertResult.rows[0];
 
         return res.status(201).json({
             message: "Pickup claimed successfully.",
-            assignment: savedAssignment,
+            assignment: {
+                AssignmentId: pickup.id,
+                RequestId: pickup.request_id,
+                ListingId: request.listing_id,
+                VolunteerUserId: pickup.volunteer_id,
+                Status: pickup.status,
+                AssignedAt: pickup.created_at,
+            },
         });
     } catch (error) {
-        const errorNumber =
-            error.number ? error.number : error.originalError ? error.originalError.number : error.originalError ? error.originalError.info ? error.originalError.info.number : null : null;
+        if (client) {
+            try {
+                await client.query("ROLLBACK");
+            } catch (rollbackError) {
+                console.error(
+                    "Claim pickup rollback failed:",
+                    rollbackError.message
+                );
+            }
+        }
 
-        if (errorNumber === 2601 || errorNumber === 2627) {
+        if (error && error.code === "23505") {
             return res.status(409).json({
                 message: "This pickup has already been claimed.",
             });
         }
 
-        if (errorNumber === 1205) {
-            return res.status(409).json({
-                message: "Another operation conflicted with this claim. Refresh and try again.",
-            });
-        }
-
-        console.error("Claim pickup failed:", error.message);
+        console.error(
+            "Claim pickup failed:",
+            error.message
+        );
 
         return res.status(500).json({
             message: "Unable to confirm the claim. Refresh My assignments before trying again.",
         });
+    } finally {
+        if (client) {
+            client.release();
+        }
     }
 }
 
 async function getMyAssignments(req, res) {
     try {
-        const pool = await getPool();
+        const result = await pool.query(
+            `
+                SELECT
+                    p.id,
+                    p.request_id,
+                    r.listing_id,
+                    p.status,
+                    p.created_at,
+                    p.picked_up_at,
+                    l.food_name,
+                    l.food_type,
+                    l.quantity,
+                    l.unit,
+                    l.city,
+                    l.available_until,
+                    l.storage_conditions,
+                    l.allergen_info,
+                    r.delivery_address,
+                    donor.full_name AS donor_name,
+                    ngo.full_name AS ngo_name
+                FROM public.pickups p
+                INNER JOIN public.requests r
+                    ON r.id = p.request_id
+                INNER JOIN public.listings l
+                    ON l.id = r.listing_id
+                INNER JOIN public.users donor
+                    ON donor.user_id = l.donor_id
+                INNER JOIN public.users ngo
+                    ON ngo.user_id = r.ngo_id
+                WHERE p.volunteer_id = $1
+                ORDER BY p.created_at DESC, p.id DESC
+                LIMIT 100;
+            `, [req.user.userId]
+        );
 
-        const result = await pool
-            .request()
-            .input("VolunteerUserId", sql.Int, req.user.userId)
-            .query(`
-        SELECT TOP (100)
-          pa.AssignmentId,
-          pa.RequestId,
-          pa.ListingId,
-          pa.Status,
-          pa.AssignedAt,
-          pa.PickedUpAt,
-          pa.DeliveredAt,
-          fl.Title,
-          fl.FoodType,
-          fl.Quantity,
-          fl.Unit,
-          fl.City,
-          fl.ExpiresAt,
-          fl.StorageConditions,
-          fl.AllergenInfo,
-          dr.DeliveryAddress,
-          donor.FullName AS DonorName,
-          ngo.FullName AS NgoName
-        FROM dbo.PickupAssignments pa
-        INNER JOIN dbo.DonationRequests dr
-          ON dr.RequestId = pa.RequestId
-        INNER JOIN dbo.FoodListings fl
-          ON fl.ListingId = pa.ListingId
-        INNER JOIN dbo.Users donor
-          ON donor.UserId = fl.DonorUserId
-        INNER JOIN dbo.Users ngo
-          ON ngo.UserId = dr.NgoUserId
-        WHERE pa.VolunteerUserId = @VolunteerUserId
-        ORDER BY pa.AssignedAt DESC, pa.AssignmentId DESC;
-      `);
+        const assignments = result.rows.map((assignment) => ({
+            AssignmentId: assignment.id,
+            RequestId: assignment.request_id,
+            ListingId: assignment.listing_id,
+            Status: assignment.status,
+            AssignedAt: assignment.created_at,
+            PickedUpAt: assignment.picked_up_at,
+            DeliveredAt: null,
+            Title: assignment.food_name,
+            FoodType: assignment.food_type,
+            Quantity: Number(assignment.quantity),
+            Unit: assignment.unit,
+            City: assignment.city,
+            ExpiresAt: assignment.available_until,
+            StorageConditions: assignment.storage_conditions,
+            AllergenInfo: assignment.allergen_info,
+            DeliveryAddress: assignment.delivery_address,
+            DonorName: assignment.donor_name,
+            NgoName: assignment.ngo_name,
+        }));
 
         return res.status(200).json({
             message: "Your assignments retrieved successfully.",
-            count: result.recordset.length,
-            assignments: result.recordset,
+            count: assignments.length,
+            assignments,
         });
     } catch (error) {
-        console.error("Get my assignments failed:", error.message);
+        console.error(
+            "Get my assignments failed:",
+            error.message
+        );
 
         return res.status(500).json({
             message: "Unable to load your assignments.",
         });
     }
 }
+
 async function markPickupCollected(req, res) {
     const rawAssignmentId = req.params.assignmentId;
 
@@ -289,36 +331,29 @@ async function markPickupCollected(req, res) {
     }
 
     try {
-        const pool = await getPool();
+        const result = await pool.query(
+            `
+                UPDATE public.pickups
+                SET
+                    status = 'picked_up',
+                    picked_up_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = $1
+                    AND volunteer_id = $2
+                    AND status = 'assigned'
+                RETURNING
+                    id,
+                    request_id,
+                    volunteer_id,
+                    status,
+                    created_at,
+                    picked_up_at;
+            `, [assignmentId, req.user.userId]
+        );
 
-        const result = await pool
-            .request()
-            .input("AssignmentId", sql.Int, assignmentId)
-            .input("VolunteerUserId", sql.Int, req.user.userId)
-            .query(`
-        UPDATE dbo.PickupAssignments
-        SET
-          Status = 'picked_up',
-          PickedUpAt = SYSUTCDATETIME(),
-          UpdatedAt = SYSUTCDATETIME()
-        OUTPUT
-          inserted.AssignmentId,
-          inserted.RequestId,
-          inserted.ListingId,
-          inserted.VolunteerUserId,
-          inserted.Status,
-          inserted.AssignedAt,
-          inserted.PickedUpAt,
-          inserted.DeliveredAt,
-          inserted.UpdatedAt
-        WHERE AssignmentId = @AssignmentId
-          AND VolunteerUserId = @VolunteerUserId
-          AND Status = 'assigned';
-      `);
+        const pickup = result.rows[0];
 
-        const assignment = result.recordset[0];
-
-        if (!assignment) {
+        if (!pickup) {
             return res.status(409).json({
                 message: "This assignment cannot be marked as picked up. It may not belong to you, may no longer exist, or may already have progressed. Refresh your assignments.",
             });
@@ -326,16 +361,29 @@ async function markPickupCollected(req, res) {
 
         return res.status(200).json({
             message: "Food marked as picked up successfully.",
-            assignment,
+            assignment: {
+                AssignmentId: pickup.id,
+                RequestId: pickup.request_id,
+                VolunteerUserId: pickup.volunteer_id,
+                Status: pickup.status,
+                AssignedAt: pickup.created_at,
+                PickedUpAt: pickup.picked_up_at,
+                DeliveredAt: null,
+                UpdatedAt: pickup.picked_up_at,
+            },
         });
     } catch (error) {
-        console.error("Mark pickup collected failed:", error.message);
+        console.error(
+            "Mark pickup collected failed:",
+            error.message
+        );
 
         return res.status(500).json({
             message: "Unable to confirm the update. Refresh your assignments before trying again.",
         });
     }
 }
+
 async function markPickupDelivered(req, res) {
     const rawAssignmentId = req.params.assignmentId;
 
@@ -355,122 +403,126 @@ async function markPickupDelivered(req, res) {
         });
     }
 
+    let client;
+
     try {
-        const pool = await getPool();
+        client = await pool.connect();
 
-        const result = await pool
-            .request()
-            .input("AssignmentId", sql.Int, assignmentId)
-            .input("VolunteerUserId", sql.Int, req.user.userId)
-            .query(`
-        SET XACT_ABORT ON;
+        await client.query("BEGIN");
 
-        BEGIN TRY
-          BEGIN TRANSACTION;
+        const assignmentResult = await client.query(
+            `
+                SELECT
+                    p.id,
+                    p.request_id,
+                    p.status AS pickup_status,
+                    r.status AS request_status,
+                    l.id AS listing_id,
+                    l.status AS listing_status
+                FROM public.pickups p
+                INNER JOIN public.requests r
+                    ON r.id = p.request_id
+                INNER JOIN public.listings l
+                    ON l.id = r.listing_id
+                WHERE p.id = $1
+                    AND p.volunteer_id = $2
+                FOR UPDATE OF p, r, l;
+            `, [assignmentId, req.user.userId]
+        );
 
-          DECLARE @RequestId INT;
-          DECLARE @ListingId INT;
-          DECLARE @AssignmentStatus VARCHAR(20);
-          DECLARE @RequestStatus VARCHAR(20);
-          DECLARE @ListingStatus VARCHAR(20);
-          DECLARE @Now DATETIME2 = SYSUTCDATETIME();
+        const assignment = assignmentResult.rows[0];
 
-          SELECT
-            @RequestId = dr.RequestId,
-            @ListingId = fl.ListingId,
-            @AssignmentStatus = pa.Status,
-            @RequestStatus = dr.Status,
-            @ListingStatus = fl.Status
-          FROM dbo.PickupAssignments pa WITH (UPDLOCK, HOLDLOCK)
-          INNER JOIN dbo.DonationRequests dr WITH (UPDLOCK, HOLDLOCK)
-            ON dr.RequestId = pa.RequestId
-          INNER JOIN dbo.FoodListings fl WITH (UPDLOCK, HOLDLOCK)
-            ON fl.ListingId = pa.ListingId
-            AND fl.ListingId = dr.ListingId
-          WHERE pa.AssignmentId = @AssignmentId
-            AND pa.VolunteerUserId = @VolunteerUserId;
+        if (!assignment) {
+            await client.query("ROLLBACK");
 
-          IF @RequestId IS NULL
-          BEGIN
-            ROLLBACK TRANSACTION;
-            SELECT 'not_found' AS Outcome;
-            RETURN;
-          END;
-
-          IF @AssignmentStatus <> 'picked_up'
-            OR @RequestStatus <> 'accepted'
-            OR @ListingStatus <> 'reserved'
-          BEGIN
-            ROLLBACK TRANSACTION;
-            SELECT 'invalid_state' AS Outcome;
-            RETURN;
-          END;
-
-          UPDATE dbo.PickupAssignments
-          SET
-            Status = 'delivered',
-            DeliveredAt = @Now,
-            UpdatedAt = @Now
-          WHERE AssignmentId = @AssignmentId;
-
-          UPDATE dbo.DonationRequests
-          SET
-            Status = 'completed',
-            UpdatedAt = @Now
-          WHERE RequestId = @RequestId;
-
-          UPDATE dbo.FoodListings
-          SET
-            Status = 'completed',
-            UpdatedAt = @Now
-          WHERE ListingId = @ListingId;
-
-          COMMIT TRANSACTION;
-
-          SELECT
-            'delivered' AS Outcome,
-            @AssignmentId AS AssignmentId,
-            @RequestId AS RequestId,
-            @ListingId AS ListingId,
-            'delivered' AS Status,
-            @Now AS DeliveredAt;
-        END TRY
-        BEGIN CATCH
-          IF XACT_STATE() <> 0
-            ROLLBACK TRANSACTION;
-
-          THROW;
-        END CATCH;
-      `);
-
-        const outcome = result.recordset[0];
-
-        if (outcome.Outcome === "not_found") {
             return res.status(404).json({
                 message: "Assignment not found for this volunteer.",
             });
         }
 
-        if (outcome.Outcome === "invalid_state") {
+        const isValidState =
+            assignment.pickup_status === "picked_up" &&
+            assignment.request_status === "accepted" &&
+            assignment.listing_status === "reserved";
+
+        if (!isValidState) {
+            await client.query("ROLLBACK");
+
             return res.status(409).json({
                 message: "This assignment cannot be completed in its current state. Refresh your assignments. It must be picked up, with an accepted request and reserved listing.",
             });
         }
 
-        const { Outcome, ...assignment } = outcome;
+        const deliveredAt = new Date();
+
+        await client.query(
+            `
+                UPDATE public.pickups
+                SET
+                    status = 'delivered',
+                    updated_at = $1
+                WHERE id = $2;
+            `, [deliveredAt, assignmentId]
+        );
+
+        await client.query(
+            `
+                UPDATE public.requests
+                SET
+                    status = 'completed',
+                    updated_at = $1
+                WHERE id = $2;
+            `, [deliveredAt, assignment.request_id]
+        );
+
+        await client.query(
+            `
+                UPDATE public.listings
+                SET
+                    status = 'completed'
+                WHERE id = $1;
+            `, [assignment.listing_id]
+        );
+
+        await client.query("COMMIT");
 
         return res.status(200).json({
             message: "Delivery confirmed successfully.",
-            assignment,
+            assignment: {
+                AssignmentId: assignment.id,
+                RequestId: assignment.request_id,
+                ListingId: assignment.listing_id,
+                Status: "delivered",
+                DeliveredAt: deliveredAt.toISOString(),
+            },
         });
     } catch (error) {
-        console.error("Mark pickup delivered failed:", error.message);
+        if (client) {
+            try {
+                await client.query("ROLLBACK");
+            } catch (rollbackError) {
+                console.error(
+                    "Mark pickup delivered rollback failed:",
+                    rollbackError.message
+                );
+            }
+        }
+
+        console.error(
+            "Mark pickup delivered failed:",
+            error.message
+        );
 
         return res.status(500).json({
             message: "Unable to confirm delivery. Refresh your assignments before trying again.",
         });
+    } finally {
+        if (client) {
+            client.release();
+        }
     }
 }
+
 module.exports = {
     getAvailablePickups,
     claimPickup,
