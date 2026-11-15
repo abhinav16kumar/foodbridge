@@ -1,9 +1,7 @@
-const { sql, getPool } = require("../config/db");
+const pool = require("../config/db");
 const {
     createNotification,
 } = require("./notification.controller");
-
-
 
 async function createRequest(req, res) {
     const {
@@ -11,8 +9,6 @@ async function createRequest(req, res) {
         message,
         deliveryAddress,
     } = req.body || {};
-
-
 
     if (!Number.isInteger(listingId) ||
         listingId <= 0 ||
@@ -23,8 +19,6 @@ async function createRequest(req, res) {
         });
     }
 
-
-
     if (
         message != null &&
         (typeof message !== "string" || message.trim().length > 1000)
@@ -33,6 +27,7 @@ async function createRequest(req, res) {
             message: "Message must be text of no more than 1000 characters.",
         });
     }
+
     if (
         typeof deliveryAddress !== "string" ||
         !deliveryAddress.trim() ||
@@ -43,33 +38,23 @@ async function createRequest(req, res) {
         });
     }
 
-
     const ngoUserId = req.user.userId;
-    let transaction;
-    let transactionOpen = false;
-
-
+    let client;
 
     try {
-        const pool = await getPool();
+        client = await pool.connect();
 
+        const ngoResult = await client.query(
+            `
+                SELECT
+                    is_verified
+                FROM public.users
+                WHERE user_id = $1
+                    AND role = 'ngo';
+            `, [ngoUserId]
+        );
 
-
-        const ngoResult = await pool
-            .request()
-            .input("NgoUserId", sql.Int, ngoUserId)
-            .query(`
-                SELECT IsVerified
-                FROM dbo.Users
-                WHERE UserId = @NgoUserId
-                  AND Role = 'ngo';
-            `);
-
-
-
-        const ngo = ngoResult.recordset[0];
-
-
+        const ngo = ngoResult.rows[0];
 
         if (!ngo) {
             return res.status(404).json({
@@ -77,161 +62,116 @@ async function createRequest(req, res) {
             });
         }
 
-
-
-        const isVerified =
-            ngo.IsVerified === true || ngo.IsVerified === 1;
-
-        if (!isVerified) {
+        if (ngo.is_verified !== true) {
             return res.status(403).json({
                 message: "Your NGO account must be verified before submitting donation requests.",
             });
         }
 
+        await client.query("BEGIN");
 
-        transaction = new sql.Transaction(pool);
-
-
-
-        await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-        transactionOpen = true;
-
-
-
-        const listingResult = await new sql.Request(transaction)
-            .input("ListingId", sql.Int, listingId)
-            .query(`
+        const listingResult = await client.query(
+            `
                 SELECT
-                    ListingId,
-                    DonorUserId,
-                    Status,
-                    CASE
-                        WHEN ExpiresAt > SYSUTCDATETIME() THEN 1
-                        ELSE 0
-                    END AS IsUnexpired
-                FROM dbo.FoodListings WITH (UPDLOCK, HOLDLOCK)
-                WHERE ListingId = @ListingId;
-            `);
+                    id,
+                    donor_id,
+                    status,
+                    available_until
+                FROM public.listings
+                WHERE id = $1
+                FOR UPDATE;
+            `, [listingId]
+        );
 
-
-
-        const listing = listingResult.recordset[0];
-
-
+        const listing = listingResult.rows[0];
 
         if (!listing) {
-            await transaction.rollback();
-            transactionOpen = false;
-
-
+            await client.query("ROLLBACK");
 
             return res.status(404).json({
                 message: "Donation listing not found.",
             });
         }
 
-
-
-        if (listing.DonorUserId === ngoUserId) {
-            await transaction.rollback();
-            transactionOpen = false;
-
-
+        if (listing.donor_id === ngoUserId) {
+            await client.query("ROLLBACK");
 
             return res.status(403).json({
                 message: "You cannot request your own donation.",
             });
         }
 
+        const isUnexpired =
+            listing.available_until != null &&
+            new Date(listing.available_until).getTime() > Date.now();
 
-
-        if (
-            listing.Status !== "available" ||
-            listing.IsUnexpired !== 1
-        ) {
-            await transaction.rollback();
-            transactionOpen = false;
-
-
+        if (listing.status !== "available" || !isUnexpired) {
+            await client.query("ROLLBACK");
 
             return res.status(409).json({
                 message: "This donation is no longer available.",
             });
         }
 
+        const existingResult = await client.query(
+            `
+                SELECT
+                    id
+                FROM public.requests
+                WHERE listing_id = $1
+                    AND ngo_id = $2;
+            `, [listingId, ngoUserId]
+        );
 
-
-        const existingResult = await new sql.Request(transaction)
-            .input("ListingId", sql.Int, listingId)
-            .input("NgoUserId", sql.Int, ngoUserId)
-            .query(`
-                SELECT RequestId
-                FROM dbo.DonationRequests
-                WHERE ListingId = @ListingId
-                  AND NgoUserId = @NgoUserId;
-            `);
-
-
-
-        if (existingResult.recordset.length > 0) {
-            await transaction.rollback();
-            transactionOpen = false;
-
-
+        if (existingResult.rows.length > 0) {
+            await client.query("ROLLBACK");
 
             return res.status(409).json({
                 message: "You have already requested this donation.",
             });
         }
 
-
-        const result = await new sql.Request(transaction)
-            .input("ListingId", sql.Int, listingId)
-            .input("NgoUserId", sql.Int, ngoUserId)
-            .input(
-                "Message",
-                sql.NVarChar(1000),
+        const result = await client.query(
+            `
+                INSERT INTO public.requests (
+                    listing_id,
+                    ngo_id,
+                    message,
+                    delivery_address,
+                    status
+                )
+                VALUES (
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    'pending'
+                )
+                RETURNING
+                    id,
+                    listing_id,
+                    ngo_id,
+                    message,
+                    delivery_address,
+                    status,
+                    created_at;
+            `, [
+                listingId,
+                ngoUserId,
                 typeof message === "string" ?
                 message.trim() || null :
-                null
-            )
-            .input(
-                "DeliveryAddress",
-                sql.NVarChar(500),
-                deliveryAddress.trim()
-            )
-            .query(`
-    INSERT INTO dbo.DonationRequests (
-      ListingId,
-      NgoUserId,
-      Message,
-      DeliveryAddress
-    )
-    OUTPUT
-      INSERTED.RequestId,
-      INSERTED.ListingId,
-      INSERTED.NgoUserId,
-      INSERTED.Message,
-      INSERTED.DeliveryAddress,
-      INSERTED.Status,
-      INSERTED.CreatedAt
-    VALUES (
-      @ListingId,
-      @NgoUserId,
-      @Message,
-      @DeliveryAddress
-    );
-  `);
+                null,
+                deliveryAddress.trim(),
+            ]
+        );
 
+        await client.query("COMMIT");
 
-        await transaction.commit();
-        transactionOpen = false;
-
-
+        const request = result.rows[0];
 
         try {
             await createNotification(
-                listing.DonorUserId,
+                listing.donor_id,
                 "New donation request",
                 "An NGO has requested one of your food donations.",
                 "donation_request"
@@ -243,16 +183,22 @@ async function createRequest(req, res) {
             );
         }
 
-
-
         return res.status(201).json({
             message: "Donation request submitted successfully.",
-            request: result.recordset[0],
+            request: {
+                RequestId: request.id,
+                ListingId: request.listing_id,
+                NgoUserId: request.ngo_id,
+                Message: request.message,
+                DeliveryAddress: request.delivery_address,
+                Status: request.status,
+                CreatedAt: request.created_at,
+            },
         });
     } catch (error) {
-        if (transactionOpen) {
+        if (client) {
             try {
-                await transaction.rollback();
+                await client.query("ROLLBACK");
             } catch (rollbackError) {
                 console.error(
                     "Request transaction rollback failed:",
@@ -261,76 +207,79 @@ async function createRequest(req, res) {
             }
         }
 
-
-
-        const errorNumber =
-            error?.number ?? error?.originalError?.info?.number;
-
-
-
-
-        if (errorNumber === 2601 || errorNumber === 2627) {
+        if (error && error.code === "23505") {
             return res.status(409).json({
                 message: "You have already requested this donation.",
             });
         }
 
-
-
-        console.error("Create donation request failed:", error.message);
-
-
+        console.error(
+            "Create donation request failed:",
+            error.message
+        );
 
         return res.status(500).json({
             message: "Unable to submit donation request. Please try again later.",
         });
+    } finally {
+        if (client) {
+            client.release();
+        }
     }
 }
 
-
-
 async function getDonorRequests(req, res) {
     try {
-        const donorUserId = req.user.userId;
-        const pool = await getPool();
-
-
-
-        const result = await pool.request()
-            .input("DonorUserId", sql.Int, donorUserId)
-            .query(`
+        const result = await pool.query(
+            `
                 SELECT
-                    dr.RequestId,
-                    dr.ListingId,
-                    dr.NgoUserId,
-                    dr.Message,
-                    dr.DeliveryAddress,
-                    dr.Status,
-                    dr.CreatedAt,
-                    dr.UpdatedAt,
-                    fl.Title,
-                    fl.Quantity,
-                    fl.FoodType,
-                    fl.City,
-                    u.FullName AS NgoName
-                FROM dbo.DonationRequests dr
-                INNER JOIN dbo.FoodListings fl
-                    ON fl.ListingId = dr.ListingId
-                INNER JOIN dbo.Users u
-                    ON u.UserId = dr.NgoUserId
-                WHERE fl.DonorUserId = @DonorUserId
-                ORDER BY dr.CreatedAt DESC;
-            `);
+                    r.id,
+                    r.listing_id,
+                    r.ngo_id,
+                    r.message,
+                    r.delivery_address,
+                    r.status,
+                    r.created_at,
+                    r.updated_at,
+                    l.food_name,
+                    l.quantity,
+                    l.food_type,
+                    l.city,
+                    u.full_name
+                FROM public.requests r
+                INNER JOIN public.listings l
+                    ON l.id = r.listing_id
+                INNER JOIN public.users u
+                    ON u.user_id = r.ngo_id
+                WHERE l.donor_id = $1
+                ORDER BY r.created_at DESC;
+            `, [req.user.userId]
+        );
 
-
+        const requests = result.rows.map((request) => ({
+            RequestId: request.id,
+            ListingId: request.listing_id,
+            NgoUserId: request.ngo_id,
+            Message: request.message,
+            DeliveryAddress: request.delivery_address,
+            Status: request.status,
+            CreatedAt: request.created_at,
+            UpdatedAt: request.updated_at,
+            Title: request.food_name,
+            Quantity: Number(request.quantity),
+            FoodType: request.food_type,
+            City: request.city,
+            NgoName: request.full_name,
+        }));
 
         return res.json({
-            requests: result.recordset,
+            requests,
         });
     } catch (error) {
-        console.error("Get donor requests failed:", error.message);
-
-
+        console.error(
+            "Get donor requests failed:",
+            error.message
+        );
 
         return res.status(500).json({
             message: "Unable to load donation requests.",
@@ -338,13 +287,9 @@ async function getDonorRequests(req, res) {
     }
 }
 
-
-
 async function updateRequestStatus(req, res) {
     const requestId = Number(req.params.requestId);
     const { status } = req.body || {};
-
-
 
     if (!Number.isInteger(requestId) || requestId <= 0) {
         return res.status(400).json({
@@ -352,115 +297,79 @@ async function updateRequestStatus(req, res) {
         });
     }
 
-
-
     if (!["accepted", "declined"].includes(status)) {
         return res.status(400).json({
             message: "Status must be either accepted or declined.",
         });
     }
 
-
-
     const donorUserId = req.user.userId;
-    let transaction;
-    let transactionOpen = false;
-
-
+    let client;
 
     try {
-        const pool = await getPool();
-        transaction = new sql.Transaction(pool);
+        client = await pool.connect();
 
+        await client.query("BEGIN");
 
-
-        await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-        transactionOpen = true;
-
-
-
-        const ownershipResult = await new sql.Request(transaction)
-            .input("RequestId", sql.Int, requestId)
-            .input("DonorUserId", sql.Int, donorUserId)
-            .query(`
+        const ownershipResult = await client.query(
+            `
                 SELECT
-                    dr.RequestId,
-                    dr.NgoUserId,
-                    dr.Status,
-                    fl.ListingId,
-                    fl.Status AS ListingStatus
-                FROM dbo.DonationRequests dr
-                INNER JOIN dbo.FoodListings fl
-                    ON fl.ListingId = dr.ListingId
-                WHERE dr.RequestId = @RequestId
-                  AND fl.DonorUserId = @DonorUserId;
-            `);
+                    r.id,
+                    r.ngo_id,
+                    r.status,
+                    l.id AS listing_id,
+                    l.status AS listing_status
+                FROM public.requests r
+                INNER JOIN public.listings l
+                    ON l.id = r.listing_id
+                WHERE r.id = $1
+                    AND l.donor_id = $2
+                FOR UPDATE OF r, l;
+            `, [requestId, donorUserId]
+        );
 
-
-
-        const request = ownershipResult.recordset[0];
-
-
+        const request = ownershipResult.rows[0];
 
         if (!request) {
-            await transaction.rollback();
-            transactionOpen = false;
-
-
+            await client.query("ROLLBACK");
 
             return res.status(404).json({
                 message: "Donation request not found for this donor.",
             });
         }
 
-
-
-        if (request.Status !== "pending") {
-            await transaction.rollback();
-            transactionOpen = false;
-
-
+        if (request.status !== "pending") {
+            await client.query("ROLLBACK");
 
             return res.status(409).json({
                 message: "This request has already been responded to.",
             });
         }
 
-
-
-        await new sql.Request(transaction)
-            .input("RequestId", sql.Int, requestId)
-            .input("Status", sql.VarChar(20), status)
-            .query(`
-                UPDATE dbo.DonationRequests
-                SET Status = @Status,
-                    UpdatedAt = SYSUTCDATETIME()
-                WHERE RequestId = @RequestId;
-            `);
-
-
+        await client.query(
+            `
+                UPDATE public.requests
+                SET status = $1,
+                    updated_at = NOW()
+                WHERE id = $2;
+            `, [status, requestId]
+        );
 
         if (status === "accepted") {
-            await new sql.Request(transaction)
-                .input("ListingId", sql.Int, request.ListingId)
-                .query(`
-                    UPDATE dbo.FoodListings
-                    SET Status = 'reserved',
-                        UpdatedAt = SYSUTCDATETIME()
-                    WHERE ListingId = @ListingId;
-                `);
+            await client.query(
+                `
+                    UPDATE public.listings
+                    SET status = 'reserved'
+                    WHERE id = $1;
+                `, [request.listing_id]
+            );
         }
 
-
-
-        await transaction.commit();
-        transactionOpen = false;
-
-
+        await client.query("COMMIT");
 
         try {
             await createNotification(
-                request.NgoUserId,
+                request.ngo_id,
                 `Donation request ${status}`,
                 `The donor has ${status} your donation request.`,
                 "request_status"
@@ -472,15 +381,13 @@ async function updateRequestStatus(req, res) {
             );
         }
 
-
-
         return res.json({
             message: `Donation request ${status}.`,
         });
     } catch (error) {
-        if (transactionOpen) {
+        if (client) {
             try {
-                await transaction.rollback();
+                await client.query("ROLLBACK");
             } catch (rollbackError) {
                 console.error(
                     "Request status rollback failed:",
@@ -489,69 +396,84 @@ async function updateRequestStatus(req, res) {
             }
         }
 
-
-
-        console.error("Update request status failed:", error.message);
-
-
+        console.error(
+            "Update request status failed:",
+            error.message
+        );
 
         return res.status(500).json({
             message: "Unable to update donation request.",
         });
+    } finally {
+        if (client) {
+            client.release();
+        }
     }
 }
 
-
-
 async function getNgoRequests(req, res) {
     try {
-        const pool = await getPool();
+        const result = await pool.query(
+            `
+                SELECT
+                    r.id,
+                    r.listing_id,
+                    r.message,
+                    r.delivery_address,
+                    r.status,
+                    r.created_at,
+                    r.updated_at,
+                    l.food_name,
+                    l.quantity,
+                    l.unit,
+                    l.food_type,
+                    l.city,
+                    l.status AS listing_status,
+                    donor.full_name,
+                    p.id AS pickup_id,
+                    p.status AS pickup_status,
+                    p.created_at AS pickup_created_at,
+                    volunteer.full_name AS volunteer_name
+                FROM public.requests r
+                INNER JOIN public.listings l
+                    ON l.id = r.listing_id
+                INNER JOIN public.users donor
+                    ON donor.user_id = l.donor_id
+                LEFT JOIN public.pickups p
+                    ON p.request_id = r.id
+                LEFT JOIN public.users volunteer
+                    ON volunteer.user_id = p.volunteer_id
+                WHERE r.ngo_id = $1
+                ORDER BY r.created_at DESC, r.id DESC;
+            `, [req.user.userId]
+        );
 
-        const result = await pool
-            .request()
-            .input("NgoUserId", sql.Int, req.user.userId)
-            .query(`
-        SELECT
-          dr.RequestId,
-          dr.ListingId,
-          dr.Message,
-          dr.DeliveryAddress,
-          dr.Status,
-          dr.CreatedAt,
-          dr.UpdatedAt,
-          fl.Title,
-          fl.Quantity,
-          fl.Unit,
-          fl.FoodType,
-          fl.City,
-          fl.Status AS ListingStatus,
-          donor.FullName AS DonorName,
-          pa.AssignmentId,
-          pa.Status AS AssignmentStatus,
-          pa.DeliveredAt,
-          volunteer.FullName AS VolunteerName,
-          vr.RatingId,
-          vr.Rating,
-          vr.Comment AS RatingComment
-        FROM dbo.DonationRequests dr
-        INNER JOIN dbo.FoodListings fl
-          ON fl.ListingId = dr.ListingId
-        INNER JOIN dbo.Users donor
-          ON donor.UserId = fl.DonorUserId
-        LEFT JOIN dbo.PickupAssignments pa
-          ON pa.RequestId = dr.RequestId
-          AND pa.ListingId = dr.ListingId
-        LEFT JOIN dbo.Users volunteer
-          ON volunteer.UserId = pa.VolunteerUserId
-        LEFT JOIN dbo.VolunteerRatings vr
-          ON vr.AssignmentId = pa.AssignmentId
-          AND vr.NgoUserId = dr.NgoUserId
-        WHERE dr.NgoUserId = @NgoUserId
-        ORDER BY dr.CreatedAt DESC, dr.RequestId DESC;
-      `);
+        const requests = result.rows.map((request) => ({
+            RequestId: request.id,
+            ListingId: request.listing_id,
+            Message: request.message,
+            DeliveryAddress: request.delivery_address,
+            Status: request.status,
+            CreatedAt: request.created_at,
+            UpdatedAt: request.updated_at,
+            Title: request.food_name,
+            Quantity: Number(request.quantity),
+            Unit: request.unit,
+            FoodType: request.food_type,
+            City: request.city,
+            ListingStatus: request.listing_status,
+            DonorName: request.full_name,
+            AssignmentId: request.pickup_id,
+            AssignmentStatus: request.pickup_status,
+            DeliveredAt: request.pickup_created_at,
+            VolunteerName: request.volunteer_name,
+            RatingId: null,
+            Rating: null,
+            RatingComment: null,
+        }));
 
         return res.status(200).json({
-            requests: result.recordset,
+            requests,
         });
     } catch (error) {
         console.error(
@@ -564,8 +486,6 @@ async function getNgoRequests(req, res) {
         });
     }
 }
-
-
 
 module.exports = {
     createRequest,
