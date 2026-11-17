@@ -52,8 +52,12 @@ function App() {
       const loginData = await loginResponse.json();
 
       if (!loginResponse.ok) {
-        throw new Error(loginData.message || "Login failed.");
-      }
+  throw new Error(
+    `Login failed (${loginResponse.status}): ${
+      loginData.message || "Credentials rejected."
+    }`
+  );
+}
 
       // Use the token to request the protected profile.
       const profileResponse = await fetch(
@@ -67,11 +71,13 @@ function App() {
 
       const profileData = await profileResponse.json();
 
-      if (!profileResponse.ok) {
-        throw new Error(
-          profileData.message || "Unable to retrieve profile."
-        );
-      }
+     if (!profileResponse.ok) {
+  throw new Error(
+    `Profile check failed (${profileResponse.status}): ${
+      profileData.message || "Unable to retrieve profile."
+    }`
+  );
+}
       setAccessToken(loginData.token);
       setUser(profileData.user);
       localStorage.setItem("token", loginData.token);

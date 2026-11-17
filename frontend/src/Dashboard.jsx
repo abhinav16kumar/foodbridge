@@ -5,7 +5,7 @@ import PlatformReports from "./PlatformReports.jsx";
 import AvailablePickups from "./AvailablePickups.jsx";
 import PendingVolunteers from "./PendingVolunteers.jsx";
 import DashboardLayout from "./DashboardLayout.jsx";
-const API_BASE_URL = "http://localhost:5000/api/auth";
+const API_BASE_URL = "https://foodbridge1-7x4q.onrender.com/api/auth";
 
 const dashboardConfig = {
   donor: {

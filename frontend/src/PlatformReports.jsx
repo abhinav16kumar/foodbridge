@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
 const API_BASE_URL =
-  "http://localhost:5000/api/reports";
+  "https://foodbridge1-7x4q.onrender.com/api/reports";
 
 function formatNumber(value) {
   const number = Number(value);
